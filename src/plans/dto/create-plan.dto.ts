@@ -1,12 +1,15 @@
 import {
+  IsArray,
   IsInt,
   IsNotEmpty,
   IsNumber,
+  IsOptional,
   IsPositive,
   IsString,
   IsUUID,
   Min,
   MaxLength,
+  MinLength,
 } from 'class-validator';
 import { IsImageReference } from '../../uploads/is-image-reference.decorator';
 
@@ -18,7 +21,8 @@ export class CreatePlanDto {
   name: string;
 
   @IsString()
-  @IsNotEmpty()
+  @MinLength(10)
+  @MaxLength(600)
   description: string;
 
   @IsNumber()
@@ -37,6 +41,13 @@ export class CreatePlanDto {
   @IsString()
   @IsNotEmpty()
   address: string;
+
+  // Lista de equipamiento; si no se envía queda vacía
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  equipment?: string[];
 
   // Path relativo devuelto por POST /uploads, o una URL externa http(s)
   @IsImageReference()

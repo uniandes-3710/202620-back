@@ -36,6 +36,10 @@ export class PlanEntity {
   @Column()
   address: string;
 
+  // Equipamiento necesario para el plan; SQLite no tiene arrays, se guarda como JSON
+  @Column('simple-json', { default: '[]' })
+  equipment: string[];
+
   // URL de la imagen del plan
   @Column('text')
   image: string;

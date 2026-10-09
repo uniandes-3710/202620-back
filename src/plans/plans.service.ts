@@ -5,8 +5,11 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
+import { toBogotaIso } from '../shared/bogota-time';
+import { lookupMac, toIPv4 } from '../shared/client-address';
 import { UserEntity } from '../users/user.entity';
 import { CreatePlanDto } from './dto/create-plan.dto';
+import { PlanCreationLogEntity } from './plan-creation-log.entity';
 import { PlanEntity } from './plan.entity';
 
 export type PlanSummary = Pick<
@@ -14,6 +17,15 @@ export type PlanSummary = Pick<
   'id' | 'name' | 'likes' | 'estimatedPrice' | 'address' | 'image'
 > & {
   creator: Pick<UserEntity, 'id' | 'name'>;
+};
+
+export type PlanCreationInfo = {
+  planId: string;
+  userId: string;
+  userName: string;
+  ip: string | null;
+  // Hora de Bogotá (UTC-5)
+  createdAt: string;
 };
 
 export type PlanDetail = Omit<PlanEntity, 'creator' | 'generateId'> & {
@@ -25,6 +37,8 @@ export class PlansService {
   constructor(
     @InjectRepository(PlanEntity)
     private readonly plansRepository: Repository<PlanEntity>,
+    @InjectRepository(PlanCreationLogEntity)
+    private readonly creationLogsRepository: Repository<PlanCreationLogEntity>,
     @InjectRepository(UserEntity)
     private readonly usersRepository: Repository<UserEntity>,
     private readonly dataSource: DataSource,
@@ -46,6 +60,27 @@ export class PlansService {
     });
   }
 
+  /** Registro de creación de cada plan, del más reciente al más antiguo. */
+  async findCreationLogs(): Promise<PlanCreationInfo[]> {
+    const logs = await this.creationLogsRepository.find({
+      relations: { plan: { creator: true } },
+      select: {
+        id: true,
+        ipv4: true,
+        createdAt: true,
+        plan: { id: true, creator: { id: true, name: true } },
+      },
+      order: { createdAt: 'DESC', id: 'DESC' },
+    });
+    return logs.map(({ plan, ipv4, createdAt }) => ({
+      planId: plan.id,
+      userId: plan.creator.id,
+      userName: plan.creator.name,
+      ip: ipv4,
+      createdAt: toBogotaIso(createdAt),
+    }));
+  }
+
   async findOne(id: string): Promise<PlanDetail> {
     const plan = await this.plansRepository.findOne({
       where: { id },
@@ -60,6 +95,7 @@ export class PlansService {
         estimatedTime: true,
         recomendations: true,
         address: true,
+        equipment: true,
         image: true,
         creator: { name: true, userName: true },
       },
@@ -70,15 +106,28 @@ export class PlansService {
     return plan;
   }
 
-  async create({ userId, ...data }: CreatePlanDto): Promise<PlanDetail> {
+  async create(
+    { userId, ...data }: CreatePlanDto,
+    ip?: string,
+  ): Promise<PlanDetail> {
     const creator = await this.usersRepository.findOneBy({ id: userId });
     if (!creator) {
       throw new NotFoundException(`User with id "${userId}" not found`);
     }
 
-    const plan = await this.plansRepository.save(
-      this.plansRepository.create({ ...data, creator }),
-    );
+    const ipv4 = toIPv4(ip);
+    const mac = ipv4 ? await lookupMac(ipv4) : null;
+
+    // El plan y su registro de creación van juntos: o se guardan ambos o ninguno
+    const plan = await this.dataSource.transaction(async (manager) => {
+      const saved = await manager.save(
+        manager.create(PlanEntity, { ...data, creator }),
+      );
+      await manager.save(
+        manager.create(PlanCreationLogEntity, { plan: saved, ipv4, mac }),
+      );
+      return saved;
+    });
     // Misma forma que el detalle (GET /plans/:id)
     return this.findOne(plan.id);
   }

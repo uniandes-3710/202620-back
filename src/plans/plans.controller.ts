@@ -7,9 +7,11 @@ import {
   Ip,
   Param,
   Post,
+  Query,
 } from '@nestjs/common';
 import { CreatePlanDto } from './dto/create-plan.dto';
 import { LikePlanDto } from './dto/like-plan.dto';
+import { PlanQueryDto } from './dto/plan-query.dto';
 import {
   PlanCreationInfo,
   PlanDetail,
@@ -22,8 +24,13 @@ export class PlansController {
   constructor(private readonly plansService: PlansService) {}
 
   @Get()
-  findAll(): Promise<PlanSummary[]> {
-    return this.plansService.findAll();
+  async findAll(
+    @Query() { userId }: PlanQueryDto,
+    @Ip() ip: string,
+  ): Promise<PlanSummary[]> {
+    const plans = await this.plansService.findAll();
+    await this.plansService.logQuery('list', ip, userId);
+    return plans;
   }
 
   // Va antes de GET :id para que "creation-logs" no se tome como id de plan
@@ -33,8 +40,15 @@ export class PlansController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string): Promise<PlanDetail> {
-    return this.plansService.findOne(id);
+  async findOne(
+    @Param('id') id: string,
+    @Query() { userId }: PlanQueryDto,
+    @Ip() ip: string,
+  ): Promise<PlanDetail> {
+    // Solo se registran consultas de planes que existen (findOne lanza 404 si no)
+    const plan = await this.plansService.findOne(id);
+    await this.plansService.logQuery('detail', ip, userId, id);
+    return plan;
   }
 
   @Post()

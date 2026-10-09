@@ -6,10 +6,11 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { toBogotaIso } from '../shared/bogota-time';
-import { lookupMac, toIPv4 } from '../shared/client-address';
+import { resolveClientAddress } from '../shared/client-address';
 import { UserEntity } from '../users/user.entity';
 import { CreatePlanDto } from './dto/create-plan.dto';
 import { PlanCreationLogEntity } from './plan-creation-log.entity';
+import { PlanQueryAction, PlanQueryLogEntity } from './plan-query-log.entity';
 import { PlanEntity } from './plan.entity';
 
 export type PlanSummary = Pick<
@@ -39,6 +40,8 @@ export class PlansService {
     private readonly plansRepository: Repository<PlanEntity>,
     @InjectRepository(PlanCreationLogEntity)
     private readonly creationLogsRepository: Repository<PlanCreationLogEntity>,
+    @InjectRepository(PlanQueryLogEntity)
+    private readonly queryLogsRepository: Repository<PlanQueryLogEntity>,
     @InjectRepository(UserEntity)
     private readonly usersRepository: Repository<UserEntity>,
     private readonly dataSource: DataSource,
@@ -115,8 +118,7 @@ export class PlansService {
       throw new NotFoundException(`User with id "${userId}" not found`);
     }
 
-    const ipv4 = toIPv4(ip);
-    const mac = ipv4 ? await lookupMac(ipv4) : null;
+    const { ipv4, mac } = await resolveClientAddress(ip);
 
     // El plan y su registro de creación van juntos: o se guardan ambos o ninguno
     const plan = await this.dataSource.transaction(async (manager) => {
@@ -130,6 +132,27 @@ export class PlansService {
     });
     // Misma forma que el detalle (GET /plans/:id)
     return this.findOne(plan.id);
+  }
+
+  /** Registra una consulta de planes; si el usuario no está registrado se guarda sin usuario. */
+  async logQuery(
+    action: PlanQueryAction,
+    ip: string | undefined,
+    userId?: string,
+    planId?: string,
+  ): Promise<void> {
+    const { ipv4, mac } = await resolveClientAddress(ip);
+    const userExists =
+      !!userId && (await this.usersRepository.existsBy({ id: userId }));
+    await this.queryLogsRepository.save(
+      this.queryLogsRepository.create({
+        action,
+        plan: planId ? { id: planId } : null,
+        user: userExists ? { id: userId } : null,
+        ipv4,
+        mac,
+      }),
+    );
   }
 
   async like(planId: string, userId: string): Promise<PlanDetail> {

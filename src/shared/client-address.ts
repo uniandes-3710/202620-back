@@ -52,3 +52,11 @@ export async function lookupMac(ipv4: string): Promise<string | null> {
     return null;
   }
 }
+
+/** IPv4 y MAC (si se logra resolver) de quien hizo la petición. */
+export async function resolveClientAddress(
+  ip: string | undefined,
+): Promise<{ ipv4: string | null; mac: string | null }> {
+  const ipv4 = toIPv4(ip);
+  return { ipv4, mac: ipv4 ? await lookupMac(ipv4) : null };
+}
